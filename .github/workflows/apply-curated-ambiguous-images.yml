@@ -1,0 +1,79 @@
+name: Apply curated ambiguous images
+
+on:
+  pull_request:
+    branches:
+      - update/renaming-images-2026
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout involved image folders
+        uses: actions/checkout@v4
+        with:
+          ref: agent/apply-curated-ambiguous-20260801
+          fetch-depth: 1
+          sparse-checkout: |
+            .github/workflows
+            img/ATBOH
+            img/AngryGolemGamesMonsterManual
+            img/AngryGolemGamesMonsterManual2
+            img/AngryGolemGamesMonsterManual3
+            img/COMRavenloft
+            img/DarkSunCreatureCatalog
+            img/Darklords&DomainsVol1
+            img/DeitiesClaybough
+            img/IVSO
+            img/KGFD
+            img/LOD5HLV
+            img/NS-TSDO
+            img/SEIISL
+            img/WRSTONW
+          sparse-checkout-cone-mode: true
+
+      - name: Apply and validate curated package
+        shell: bash
+        env:
+          PACKAGE_URL: "https://sdmntprnortheu.oaiusercontent.com/files/00000000-8da4-81f4-8df8-ff1cb392e0cd/raw?se=2026-08-01T13:45:22Z&sp=r&sv=2026-02-06&sr=b&scid=37fdc760-d578-50f8-a26d-43b3f9b63408&skoid=a0b9f82a-c86e-4064-a822-2aa38890bb37&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-08-01T03:26:09Z&ske=2026-08-02T03:26:09Z&sks=b&skv=2026-02-06&sig=ZLqJE%2BAQ6Vxp%2BJO3%2BLvsoT8YbG4loBLY0nXFD3XWtK4%3D"
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 "$PACKAGE_URL" -o package.zip
+          unzip -q package.zip -d package
+          python - <<'PY'
+          import json, shutil
+          from pathlib import Path
+          root = Path('.')
+          package = Path('package')
+          report = json.loads((package / 'report.json').read_text(encoding='utf-8'))
+          if report.get('mapping_count') != 124:
+              raise SystemExit(f"Unexpected mapping count: {report.get('mapping_count')}")
+          changes = package / 'changes'
+          for source in changes.rglob('*'):
+              if source.is_file():
+                  destination = root / source.relative_to(changes)
+                  destination.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copy2(source, destination)
+          for old in report['delete_old_paths']:
+              path = root / old
+              if not path.is_file():
+                  raise SystemExit(f'Missing old image before deletion: {old}')
+              path.unlink()
+          for mapping in report['mappings']:
+              if not (root / mapping['new']).is_file():
+                  raise SystemExit(f"Missing target image: {mapping['new']}")
+              if (root / mapping['old']).exists():
+                  raise SystemExit(f"Old image still exists: {mapping['old']}")
+          print(f"Validated {len(report['mappings'])} mappings")
+          PY
+          rm -rf package package.zip
+          git rm .github/workflows/apply-curated-ambiguous-images.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Apply curated ambiguous image mappings"
+          git push origin HEAD:agent/apply-curated-ambiguous-20260801
